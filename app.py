@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException
 from neo4j import GraphDatabase
 from pydantic import BaseModel
 from typing import List, Optional
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from integration import analyze_github_repository
 
 app = FastAPI(
     title="AI-Driven Software Supply-Chain Security Analyzer",
@@ -9,6 +12,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+# Define a request body model
+class RepoRequest(BaseModel):
+    repo_url: str
+
+@app.post("/analyze-repo")
+def analyze_repo_endpoint(payload: RepoRequest):
+    try:
+        result = analyze_github_repository(payload.repo_url)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 # Neo4j connection configuration
 URI = "neo4j://127.0.0.1:7687"
 AUTH = ("neo4j", "Anjana#99")  # Update with your actual password if different

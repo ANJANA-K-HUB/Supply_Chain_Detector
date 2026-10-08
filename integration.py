@@ -1,73 +1,117 @@
+import os
+import shutil
 from neo4j import GraphDatabase
-import requests
+from github_loader import fetch_dependencies_from_github, download_repo_zip
+from parser import parse_requirements_txt
+from neo4j_loader import URI, AUTH, save_graph_to_neo4j
+from vulnerability_checker import check_package_vulnerability
+from behavior_analyzer import analyze_package_behavior
+from code_analyzer import analyze_source_code
 
-# Neo4j connection details (use your actual password)
-URI = "neo4j://127.0.0.1:7687"
-AUTH = ("neo4j", "Anjana#99")  # Replace with your actual password
-
-def get_all_dependencies(tx):
-    """Fetches all dependencies stored in the Neo4j database."""
-    result = tx.run("MATCH (d:Dependency) RETURN d.name AS name, d.version AS version")
-    return [{"name": record["name"], "version": record["version"]} for record in result]
-
-def update_dependency_vulnerabilities(tx, package_name, version, vulnerabilities):
-    """Updates a dependency node in Neo4j with its vulnerability status."""
-    has_vuln = len(vulnerabilities) > 0
-    vuln_count = len(vulnerabilities)
-    # Get a summary string of the first vulnerability if it exists
-    vuln_summary = vulnerabilities[0].get("summary", "Unknown vulnerability") if has_vuln else "None"
-
-    tx.run(
-        """
-        MATCH (d:Dependency {name: $name, version: $version})
-        SET d.is_vulnerable = $has_vuln,
-            d.vuln_count = $vuln_count,
-            d.latest_vuln_summary = $vuln_summary
-        """,
-        name=package_name,
-        version=version,
-        has_vuln=has_vuln,
-        vuln_count=vuln_count,
-        vuln_summary=vuln_summary
-    )
-
-def check_osv_api(package_name, version):
-    """Queries OSV.dev for a package version."""
-    url = "https://api.osv.dev/v1/query"
-    payload = {
-        "package": {"name": package_name, "ecosystem": "PyPI"},
-        "version": version
-    }
+def analyze_github_repository(repo_url: str):
+    """
+    Pipeline: 
+    1. Fetch dependencies -> Parse -> Check Vulnerabilities -> Analyze PyPI Behavior -> Save to Neo4j
+    2. Download Repo Source Code -> Scan Python files (excluding venv) for code-level security issues
+    """
+    print(f"[*] Fetching dependencies from: {repo_url}")
+    filename, file_content = fetch_dependencies_from_github(repo_url)
+    
+    temp_dep_file = f"temp_{filename}"
+    with open(temp_dep_file, "w", encoding="utf-8") as f:
+        f.write(file_content)
+        
+    repo_source_dir = None
     try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            return response.json().get("vulns", [])
-    except Exception as e:
-        print(f"API Error for {package_name}: {e}")
-    return []
-
-if __name__ == "__main__":
-    print("Connecting to Neo4j to fetch dependencies...")
-    try:
+        # Step A: Dependency, Vulnerability & Behavior Analysis
+        print(f"[*] Parsing dependencies from {filename}...")
+        dependencies = parse_requirements_txt(temp_dep_file)
+        
+        print(f"[*] Checking vulnerabilities and PyPI behavior for {len(dependencies)} packages...")
+        for dep in dependencies:
+            version = dep["version"]
+            if version == "latest":
+                version = "" 
+                
+            # 1. OSV Vulnerability Check
+            vulns = check_package_vulnerability(dep["name"], version)
+            if vulns:
+                latest_vuln = vulns[0]
+                summary = latest_vuln.get("summary") or latest_vuln.get("details", "No summary provided")
+                if len(summary) > 150:
+                    summary = summary[:147] + "..."
+                    
+                dep.update({
+                    "is_vulnerable": True,
+                    "vuln_count": len(vulns),
+                    "latest_vuln_summary": summary
+                })
+            else:
+                dep.update({
+                    "is_vulnerable": False,
+                    "vuln_count": 0,
+                    "latest_vuln_summary": "None"
+                })
+                
+            # 2. PyPI Package Behavior & Metadata Analysis
+            behavior = analyze_package_behavior(dep["name"], version if version else None)
+            dep.update({
+                "exists_on_pypi": behavior["exists_on_pypi"],
+                "pypi_author": behavior["author"],
+                "release_count": behavior["release_count"],
+                "behavior_risks": behavior["risk_indicators"]
+            })
+            
+        # Robust project name extraction (strips /tree/main, .git, trailing slashes)
+        clean_url = repo_url.rstrip("/")
+        if "/tree/" in clean_url:
+            clean_url = clean_url.split("/tree/")[0]
+        elif "/blob/" in clean_url:
+            clean_url = clean_url.split("/blob/")[0]
+        if clean_url.endswith(".git"):
+            clean_url = clean_url[:-4]
+        project_name = clean_url.split("/")[-1]
+        
+        print(f"[*] Saving enhanced graph for project '{project_name}' to Neo4j...")
         with GraphDatabase.driver(URI, auth=AUTH) as driver:
             with driver.session() as session:
-                # 1. Fetch dependencies from Neo4j
-                deps = session.execute_read(get_all_dependencies)
-                print(f"Found {len(deps)} dependency nodes in Neo4j. Scanning via OSV API...")
-
-                # 2. Scan each dependency using OSV and update Neo4j
-                for dep in deps:
-                    name = dep["name"]
-                    version = dep["version"]
-                    print(f"Checking {name} ({version})...")
+                session.execute_write(save_graph_to_neo4j, project_name, dependencies)
+                
+        # Step B: Code-Level Security Analysis
+        print("[*] Downloading repository source code for code analysis...")
+        repo_source_dir = download_repo_zip(repo_url)
+        
+        code_findings = []
+        ignored_dirs = {".env", "venv", "env", ".git", "__pycache__", "site-packages"}
+        
+        print("[*] Scanning source files (.py) for security risks...")
+        for root, dirs, files in os.walk(repo_source_dir):
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
+            
+            for file in files:
+                if file.endswith(".py"):
+                    full_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(full_path, repo_source_dir)
                     
-                    vulns = check_osv_api(name, version)
-                    
-                    # 3. Update database with findings
-                    session.execute_write(update_dependency_vulnerabilities, name, version, vulns)
-                    print(f" -> Updated Neo4j: {len(vulns)} vulnerabilities found.")
-
-        print("\n✅ Sync complete! All dependency nodes updated with vulnerability status in Neo4j.")
-
-    except Exception as e:
-        print(f"Connection or execution error: {e}")
+                    file_findings = analyze_source_code(full_path)
+                    if file_findings:
+                        code_findings.append({
+                            "file": relative_path,
+                            "issues": file_findings
+                        })
+                        
+        return {
+            "status": "success",
+            "repo_url": repo_url,
+            "project_name": project_name,
+            "dependency_file_used": filename,
+            "dependencies_analyzed": len(dependencies),
+            "dependencies_found": dependencies,
+            "code_analysis_findings": code_findings
+        }
+        
+    finally:
+        if os.path.exists(temp_dep_file):
+            os.remove(temp_dep_file)
+        if repo_source_dir and os.path.exists(os.path.dirname(repo_source_dir)):
+            shutil.rmtree(os.path.dirname(repo_source_dir), ignore_errors=True)

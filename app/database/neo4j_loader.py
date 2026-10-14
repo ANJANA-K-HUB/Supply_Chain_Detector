@@ -38,7 +38,7 @@ def save_graph_to_neo4j(tx, project_name, dependencies):
             MERGE (p)-[:HAS_DEPENDENCY]->(d)
             """,
             project_name=project_name,
-            dep_name=dep["name"],
+            dep_name = dep.get("name") or dep.get("package") or "unknown-dependency",
             version=dep.get("version", ""),
             constraint=dep.get("constraint", ""),
             is_vulnerable=dep.get("is_vulnerable", False),

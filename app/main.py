@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from integration import analyze_github_repository
+from app.utils.integration import analyze_github_repository
 
 app = FastAPI(
     title="AI-Driven Software Supply-Chain Security Analyzer",

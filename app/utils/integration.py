@@ -1,12 +1,12 @@
 import os
 import shutil
 from neo4j import GraphDatabase
-from github_loader import fetch_dependencies_from_github, download_repo_zip
-from parser import parse_requirements_txt
-from neo4j_loader import URI, AUTH, save_graph_to_neo4j
-from vulnerability_checker import check_package_vulnerability
-from behavior_analyzer import analyze_package_behavior
-from code_analyzer import analyze_source_code
+from app.utils.github_loader import fetch_dependencies_from_github, download_repo_zip
+from app.utils.parser import parse_requirements_txt
+from app.database.neo4j_loader import URI, AUTH, save_graph_to_neo4j
+from app.analyzer.vulnerability_checker import check_package_vulnerability
+from app.analyzer.behavior_analyzer import analyze_package_behavior
+from app.analyzer.code_analyzer import analyze_source_code
 
 def analyze_github_repository(repo_url: str):
     """

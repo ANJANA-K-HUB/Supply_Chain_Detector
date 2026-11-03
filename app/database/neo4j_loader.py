@@ -40,7 +40,7 @@ def save_graph_to_neo4j(tx, project_name, dependencies):
             project_name=project_name,
             dep_name = dep.get("name") or dep.get("package") or "unknown-dependency",
             version=dep.get("version", ""),
-            constraint=dep.get("constraint", ""),
+            constraint=dep.get("constraint", "=="),
             is_vulnerable=dep.get("is_vulnerable", False),
             vuln_count=dep.get("vuln_count", 0),
             latest_vuln_summary=dep.get("latest_vuln_summary", "None"),
@@ -49,9 +49,54 @@ def save_graph_to_neo4j(tx, project_name, dependencies):
             release_count=dep.get("release_count", 0)
         )
 
+def save_parsed_dependencies_to_neo4j(project_name, parsed_dependencies, vulnerable_components):
+    """
+    Helper wrapper used by main.py to convert plain string dependencies (e.g. 'numpy==1.24.0')
+    into detailed dictionaries and save them directly to Neo4j.
+    """
+    formatted_deps = []
+    for dep_str in parsed_dependencies:
+        # Handle requirements format (name==version or name>=version) or npm (name@version)
+        if "==" in dep_str:
+            name, ver = dep_str.split("==", 1)
+            constraint = "=="
+        elif ">=" in dep_str:
+            name, ver = dep_str.split(">=", 1)
+            constraint = ">="
+        elif "@" in dep_str:
+            name, ver = dep_str.split("@", 1)
+            constraint = "@"
+        else:
+            name, ver = dep_str, "latest"
+            constraint = "=="
+            
+        name = name.strip()
+        ver = ver.strip()
+        
+        is_vuln = any(dep_str.lower() in v.lower() or name.lower() in v.lower() for v in vulnerable_components)
+        
+        formatted_deps.append({
+            "name": name,
+            "version": ver,
+            "constraint": constraint,
+            "is_vulnerable": is_vuln,
+            "vuln_count": 1 if is_vuln else 0,
+            "latest_vuln_summary": "Known vulnerable package version." if is_vuln else "None",
+            "exists_on_pypi": True,
+            "pypi_author": "Unknown",
+            "release_count": 10
+        })
+
+    try:
+        with GraphDatabase.driver(URI, auth=AUTH) as driver:
+            with driver.session() as session:
+                session.execute_write(save_graph_to_neo4j, project_name, formatted_deps)
+        print(f"Successfully saved enhanced dependency graph for {project_name} into Neo4j!")
+    except Exception as e:
+        print(f"Neo4j connection error in loader: {e}")
+
 # --- Test run simulation ---
 if __name__ == "__main__":
-    # Sample parsed dependencies with vulnerability & behavior data
     sample_deps = [
         {
             "name": "requests", 
@@ -63,17 +108,6 @@ if __name__ == "__main__":
             "exists_on_pypi": True,
             "pypi_author": "Kenneth Reitz",
             "release_count": 70
-        },
-        {
-            "name": "fastapi", 
-            "version": "0.100.0", 
-            "constraint": ">=",
-            "is_vulnerable": False,
-            "vuln_count": 0,
-            "latest_vuln_summary": "None",
-            "exists_on_pypi": True,
-            "pypi_author": "Tiangolo",
-            "release_count": 120
         }
     ]
     project_name = "SamplePythonApp"

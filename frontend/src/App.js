@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 function App() {
-  const [repoUrl, setRepoUrl] = useState('https://github.com/ANJANA-K-HUB/employee-attrition-predictor');
+  const [repoUrl, setRepoUrl] = useState('https://github.com/ANJANA-K-HUB/AI-Resume-Matcher');
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState(null);
 
@@ -27,9 +27,11 @@ function App() {
     return { bg: '#dcfce7', color: '#16a34a', border: '#bbf7d0' };
   };
 
-  const components = reportData?.affected_components || [];
+  const allDependencies = reportData?.parsed_dependencies || [];
+  const vulnerableComponents = reportData?.affected_components || [];
   const riskTier = reportData?.final_security_report?.executive_summary?.overall_risk_tier || 'Low';
   const tierStyle = getTierBadge(riskTier);
+  const manifestDetected = reportData?.automated_findings?.manifest_detected;
 
   return (
     <div style={{ fontFamily: "'Inter', system-ui, -apple-system, sans-serif", backgroundColor: '#f8fafc', minHeight: '100vh', color: '#1e293b', padding: '30px 40px' }}>
@@ -40,7 +42,7 @@ function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '26px' }}>🛡️</span>
             <h1 style={{ fontSize: '22px', fontWeight: 700, margin: 0, letterSpacing: '-0.5px', color: '#0f172a' }}>
-              AI-Based Supply-Chain Attack Detection System
+              AI-Based Software Supply-Chain Attack Detection System
             </h1>
           </div>
           <p style={{ color: '#64748b', fontSize: '13px', margin: '4px 0 0 38px' }}>
@@ -53,7 +55,7 @@ function App() {
       </header>
 
       {/* Target URL Input Bar */}
-      <div style={{ background: '#ffffff', padding: '20px 24px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)', marginBottom: '30px', border: '1px solid #e2e8f0' }}>
+      <div style={{ background: '#ffffff', padding: '20px 24px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', marginBottom: '30px', border: '1px solid #e2e8f0' }}>
         <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', color: '#475569' }}>
           Target GitHub Repository URI / Path:
         </label>
@@ -76,8 +78,7 @@ function App() {
               cursor: 'pointer',
               fontWeight: 600,
               fontSize: '14px',
-              boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)',
-              transition: 'background 0.2s'
+              boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)'
             }}
           >
             {loading ? 'Running Pipeline...' : 'Run Analysis ⚡'}
@@ -107,8 +108,15 @@ function App() {
             </div>
 
             <div style={{ background: '#ffffff', padding: '20px 24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Detected Vulnerabilities</span>
-              <p style={{ fontSize: '28px', fontWeight: 700, margin: '8px 0 0 0', color: components.length > 0 ? '#dc2626' : '#16a34a' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Detected Vulnerabilities</span>
+                {manifestDetected && (
+                  <span style={{ fontSize: '10px', background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '4px', fontWeight: 600, border: '1px solid #bae6fd' }}>
+                    Manifest: {manifestDetected}
+                  </span>
+                )}
+              </div>
+              <p style={{ fontSize: '28px', fontWeight: 700, margin: '8px 0 0 0', color: vulnerableComponents.length > 0 ? '#dc2626' : '#16a34a' }}>
                 {reportData.automated_findings?.vulnerabilities_detected ?? '0'}
               </p>
             </div>
@@ -118,7 +126,7 @@ function App() {
           {/* Main Grid: Visual Dependency Graph & Affected Components */}
           <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px', marginBottom: '30px' }}>
             
-            {/* Visual Graph Card */}
+            {/* Visual Graph Card - Lists ALL dependencies (Green for secure, Red for vulnerable) */}
             <div style={{ background: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
               <h2 style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', margin: '0 0 4px 0' }}>Dependency Graph Topology</h2>
               <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>Cascading node evaluation & network mapping (Neo4j architecture)</p>
@@ -134,15 +142,27 @@ function App() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', width: '100%', justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {components.length > 0 ? (
-                    components.map((comp, idx) => (
-                      <div key={idx} style={{ background: '#ffeeec', color: '#dc2626', border: '1px solid #fca5a5', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, textAlign: 'center' }}>
-                        ⚠️ {comp}
-                      </div>
-                    ))
+                  {allDependencies.length > 0 ? (
+                    allDependencies.map((dep, idx) => {
+                      const isVulnerable = vulnerableComponents.some(v => v.toLowerCase().includes(dep.split('=')[0].split('@')[0].toLowerCase()));
+                      return (
+                        <div key={idx} style={{ 
+                          background: isVulnerable ? '#fee2e2' : '#f0fdf4', 
+                          color: isVulnerable ? '#dc2626' : '#16a34a', 
+                          border: `1px solid ${isVulnerable ? '#fca5a5' : '#bbf7d0'}`, 
+                          padding: '6px 12px', 
+                          borderRadius: '6px', 
+                          fontSize: '12px', 
+                          fontWeight: 600, 
+                          textAlign: 'center' 
+                        }}>
+                          {isVulnerable ? '⚠️ ' : '✅ '}{dep}
+                        </div>
+                      );
+                    })
                   ) : (
                     <div style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', padding: '6px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, textAlign: 'center' }}>
-                      ✨ Verified Secure (No Vulnerable Nodes)
+                      ✨ Verified Secure (No Nodes Found)
                     </div>
                   )}
                 </div>
@@ -161,9 +181,9 @@ function App() {
               <p style={{ fontSize: '12px', color: '#64748b', marginBottom: '16px' }}>Vulnerable packages and modules detected in dependency manifests:</p>
               
               <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', minHeight: '140px' }}>
-                {components.length > 0 ? (
+                {vulnerableComponents.length > 0 ? (
                   <ul style={{ paddingLeft: '18px', margin: 0 }}>
-                    {components.map((comp, idx) => (
+                    {vulnerableComponents.map((comp, idx) => (
                       <li key={idx} style={{ marginBottom: '10px', color: '#dc2626', fontFamily: 'monospace', fontWeight: 600, fontSize: '14px' }}>
                         {comp} <span style={{ fontSize: '11px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', padding: '2px 6px', borderRadius: '4px', marginLeft: '8px', fontWeight: 'normal' }}>Critical / Flagged</span>
                       </li>
@@ -171,7 +191,7 @@ function App() {
                   </ul>
                 ) : (
                   <div style={{ color: '#16a34a', fontSize: '13px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', height: '100%', padding: '10px' }}>
-                    <span>✅ All requirement manifests and core application modules verified. No anomalous dependencies detected.</span>
+                    <span>✅ All requirement manifests verified. No anomalous dependencies detected.</span>
                   </div>
                 )}
               </div>
